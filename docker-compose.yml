@@ -1,0 +1,43 @@
+#version: '3.8'
+
+services:
+  # Streamlit UI Service
+  streamlit-ui:
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
+    ports:
+      - "8502:8501"
+    environment:
+      - USPS_CLIENT_ID=${USPS_CLIENT_ID}
+      - USPS_CLIENT_SECRET=${USPS_CLIENT_SECRET}
+      - API_BASE_URL=http://fastapi-backend:8000
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    networks:
+      - validator-network
+    depends_on:
+      - fastapi-backend
+
+  # FastAPI Backend Service
+  fastapi-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      - USPS_CLIENT_ID=${USPS_CLIENT_ID}
+      - USPS_CLIENT_SECRET=${USPS_CLIENT_SECRET}
+      - PORT=8000
+      - HOST=0.0.0.0
+    volumes:
+      - .:/app
+    restart: unless-stopped
+    networks:
+      - validator-network
+
+networks:
+  validator-network:
+    driver: bridge
