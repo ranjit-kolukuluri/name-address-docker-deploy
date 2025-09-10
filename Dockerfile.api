@@ -1,3 +1,4 @@
+# Fixed Dockerfile.api - Corrected Version
 FROM python:3.11-slim
 
 # Set working directory
@@ -9,20 +10,95 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy API requirements and install Python dependencies
-COPY api/requirements.txt requirements.txt
+# Copy requirements and install Python dependencies
+COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY . .
 
+# 🔧 FIXED: Better dictionary handling without shell syntax in COPY
+RUN mkdir -p /app/dictionaries
+
+# 🔧 FIXED: Copy dictionary files if they exist, create placeholder if not
+RUN if [ -d "dictionaries" ] && [ "$(ls -A dictionaries 2>/dev/null)" ]; then \
+        cp -r dictionaries/* /app/dictionaries/ && \
+        echo "✅ Dictionary files copied:" && \
+        ls -la /app/dictionaries/; \
+    else \
+        echo "⚠️ No dictionary files found - will use AI fallback" && \
+        touch /app/dictionaries/.placeholder; \
+    fi
+
+# Create .streamlit directory and secrets file  
+RUN mkdir -p /app/.streamlit
+RUN echo '[secrets]' > /app/.streamlit/secrets.toml
+
+# 🔧 FIXED: Create startup script using HERE document
+RUN cat > /app/start.sh << 'EOF'
+#!/bin/bash
+echo "🚀 Starting Address Validator Services..."
+
+# Check dictionary files
+if [ -d "/app/dictionaries" ] && [ "$(ls -A /app/dictionaries 2>/dev/null | grep -v '.placeholder')" ]; then
+    echo "✅ Dictionary files found:"
+    ls -la /app/dictionaries
+    export DICTIONARY_PATH=/app/dictionaries
+else
+    echo "⚠️ No dictionary files found - using AI-only validation"
+    export DICTIONARY_PATH=""
+fi
+
+# Check USPS credentials
+if [ -n "$USPS_CLIENT_ID" ] && [ -n "$USPS_CLIENT_SECRET" ]; then
+    echo "✅ USPS credentials configured"
+else
+    echo "⚠️ USPS credentials missing - address validation limited"
+fi
+
+# Start API server in background
+echo "🔧 Starting API server on port 8000..."
+python api/main.py &
+API_PID=$!
+
+# Wait for API to start
+sleep 5
+
+# Check API health
+if curl -f http://localhost:8000/health > /dev/null 2>&1; then
+    echo "✅ API server started successfully"
+else
+    echo "⚠️ API server not responding"
+fi
+
+# Start Streamlit app
+echo "🎨 Starting Streamlit UI on port 8501..."
+streamlit run ui/app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false
+
+# If Streamlit exits, kill API
+kill $API_PID 2>/dev/null
+EOF
+
+# Make startup script executable
+RUN chmod +x /app/start.sh
+
 # Create non-root user
-RUN useradd --create-home --shell /bin/bash apiuser
-RUN chown -R apiuser:apiuser /app
-USER apiuser
+RUN useradd --create-home --shell /bin/bash streamlit
+RUN chown -R streamlit:streamlit /app
+USER streamlit
 
-# Expose FastAPI port
-EXPOSE 8000
+# 🔧 FIXED: Expose both ports
+EXPOSE 8501 8000
 
-# Start FastAPI with uvicorn
-CMD ["uvicorn", "api.production_main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+# 🔧 FIXED: Enhanced health check for both services
+HEALTHCHECK --interval=30s --timeout=30s --start-period=10s --retries=3 \
+    CMD curl -f http://localhost:8501/_stcore/health && curl -f http://localhost:8000/health || exit 1
+
+# 🔧 FIXED: Set proper environment variables
+ENV DICTIONARY_PATH=/app/dictionaries
+ENV PYTHONPATH=/app
+ENV API_HOST=0.0.0.0
+ENV API_PORT=8000
+
+# 🔧 FIXED: Use new startup script
+CMD ["/app/start.sh"]

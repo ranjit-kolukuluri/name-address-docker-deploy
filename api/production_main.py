@@ -693,4 +693,4 @@ if __name__ == "__main__":
     print(f"🔐 Authentication: Required for all endpoints")
     print(f"⚡ Rate limiting: Enabled based on API tier")
     
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    uvicorn.run(app, host="0.0.0.0", port=8000)

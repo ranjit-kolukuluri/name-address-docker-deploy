@@ -24,7 +24,7 @@ from utils.config import Config
 class ValidationService:
     """Enhanced validation service with dictionary integration and batch address processing"""
     
-    def __init__(self, dictionary_path: str = "/Users/t93uyz8/Documents/name_dictionaries"):
+    def __init__(self, dictionary_path: Optional[str] = None):
         self.name_validator = NameValidator(dictionary_path)
         self.address_validator = AddressValidator()
         self.dictionary_status = self.name_validator.dictionary_loaded

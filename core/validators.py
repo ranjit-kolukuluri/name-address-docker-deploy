@@ -23,8 +23,31 @@ from utils.logger import logger
 class NameValidator:
     """Enhanced name validator with dictionary integration and AI fallback"""
     
-    def __init__(self, dictionary_path: str = "/Users/t93uyz8/Documents/name_dictionaries"):
-        self.dictionary_path = dictionary_path
+    def __init__(self, dictionary_path: Optional[str] = None):
+        # 🔧 FIXED: Make dictionary path configurable for Docker
+        if dictionary_path is None:
+            # Try multiple possible dictionary locations
+            possible_paths = [
+                os.getenv('DICTIONARY_PATH'),  # Environment variable
+                '/app/dictionaries',            # Docker standard location
+                '/app/data/dictionaries',       # Alternative Docker location
+                './dictionaries',              # Local relative path
+                './data/dictionaries',         # Alternative local path
+                '/Users/t93uyz8/Documents/name_dictionaries'  # Original local path (fallback)
+            ]
+            
+            self.dictionary_path = None
+            for path in possible_paths:
+                if path and os.path.exists(path):
+                    self.dictionary_path = path
+                    logger.info(f"Found dictionary path: {path}", "VALIDATOR")
+                    break
+            
+            if not self.dictionary_path:
+                logger.warning("No dictionary path found - using AI-only validation", "VALIDATOR")
+        else:
+            self.dictionary_path = dictionary_path
+        
         self.dictionary_loaded = False
         
         # Dictionary lookup structures
@@ -44,109 +67,64 @@ class NameValidator:
         
         logger.info(f"Name validator initialized - dictionaries loaded: {self.dictionary_loaded}", "VALIDATOR")
     
+    
     def _load_dictionaries(self):
-        """Load dictionaries from CSV files"""
+        """Load dictionaries from CSV files with enhanced error handling"""
+        if not self.dictionary_path:
+            logger.warning("No dictionary path available", "VALIDATOR")
+            return
+            
         try:
+            logger.info(f"Attempting to load dictionaries from: {self.dictionary_path}", "VALIDATOR")
+            
             if not os.path.exists(self.dictionary_path):
                 logger.warning(f"Dictionary path not found: {self.dictionary_path}", "VALIDATOR")
                 return
             
+            # List available files for debugging
+            try:
+                files = os.listdir(self.dictionary_path)
+                logger.info(f"Available files in dictionary path: {files}", "VALIDATOR")
+            except Exception as e:
+                logger.error(f"Cannot list dictionary directory: {e}", "VALIDATOR")
+                return
+            
             loaded_count = 0
             
-            # Load first names
-            first_names_file = os.path.join(self.dictionary_path, "usa_firstnames_infa.csv")
-            if os.path.exists(first_names_file):
-                try:
-                    df = pd.read_csv(first_names_file, encoding='utf-8')
-                    if len(df.columns) > 0:
-                        name_col = df.columns[0]
-                        self.first_names_set = set(df[name_col].str.lower().dropna())
-                        loaded_count += 1
-                        logger.info(f"Loaded first names: {len(self.first_names_set)} records", "VALIDATOR")
-                except Exception as e:
-                    logger.warning(f"Failed to load first names: {e}", "VALIDATOR")
+            # 🔧 FIXED: More flexible file loading with multiple encodings
+            dictionary_files = {
+                'first_names': ['usa_firstnames_infa.csv', 'firstnames.csv', 'first_names.csv'],
+                'surnames': ['usa_surnames_infa.csv', 'surnames.csv', 'last_names.csv'],
+                'gender': ['usa_gender_infa.csv', 'gender.csv', 'gender_mappings.csv'],
+                'nicknames': ['usa_nicknames_infa.csv', 'nicknames.csv', 'nickname_mappings.csv'],
+                'business': ['usa_business_word_infa.csv', 'business_words.csv', 'business.csv'],
+                'suffixes': ['usa_company_sufx_abrv_infa.csv', 'company_suffixes.csv', 'suffixes.csv'],
+                'prefixes': ['usa_name_prefix_NYL.csv', 'name_prefixes.csv', 'prefixes.csv']
+            }
             
-            # Load surnames
-            surnames_file = os.path.join(self.dictionary_path, "usa_surnames_infa.csv")
-            if os.path.exists(surnames_file):
-                try:
-                    df = pd.read_csv(surnames_file, encoding='utf-8')
-                    if len(df.columns) > 0:
-                        name_col = df.columns[0]
-                        self.surnames_set = set(df[name_col].str.lower().dropna())
-                        loaded_count += 1
-                        logger.info(f"Loaded surnames: {len(self.surnames_set)} records", "VALIDATOR")
-                except Exception as e:
-                    logger.warning(f"Failed to load surnames: {e}", "VALIDATOR")
+            encodings_to_try = ['utf-8', 'utf-8-sig', 'latin1', 'cp1252', 'iso-8859-1']
             
-            # Load gender mappings
-            gender_file = os.path.join(self.dictionary_path, "usa_gender_infa.csv")
-            if os.path.exists(gender_file):
-                try:
-                    df = pd.read_csv(gender_file, encoding='utf-8')
-                    if len(df.columns) >= 2:
-                        name_col, gender_col = df.columns[0], df.columns[1]
-                        for _, row in df.iterrows():
-                            if pd.notna(row[name_col]) and pd.notna(row[gender_col]):
-                                self.name_to_gender[row[name_col].lower()] = row[gender_col].upper()
-                        loaded_count += 1
-                        logger.info(f"Loaded gender mappings: {len(self.name_to_gender)} records", "VALIDATOR")
-                except Exception as e:
-                    logger.warning(f"Failed to load gender mappings: {e}", "VALIDATOR")
-            
-            # Load nicknames
-            nicknames_file = os.path.join(self.dictionary_path, "usa_nicknames_infa.csv")
-            if os.path.exists(nicknames_file):
-                try:
-                    df = pd.read_csv(nicknames_file, encoding='utf-8')
-                    if len(df.columns) >= 2:
-                        nickname_col, standard_col = df.columns[0], df.columns[1]
-                        for _, row in df.iterrows():
-                            if pd.notna(row[nickname_col]) and pd.notna(row[standard_col]):
-                                self.nickname_to_standard[row[nickname_col].lower()] = row[standard_col].title()
-                        loaded_count += 1
-                        logger.info(f"Loaded nickname mappings: {len(self.nickname_to_standard)} records", "VALIDATOR")
-                except Exception as e:
-                    logger.warning(f"Failed to load nicknames: {e}", "VALIDATOR")
-            
-            # Load business words
-            business_file = os.path.join(self.dictionary_path, "usa_business_word_infa.csv")
-            if os.path.exists(business_file):
-                try:
-                    df = pd.read_csv(business_file, encoding='utf-8')
-                    if len(df.columns) > 0:
-                        word_col = df.columns[0]
-                        self.business_words_set = set(df[word_col].str.lower().dropna())
-                        loaded_count += 1
-                        logger.info(f"Loaded business words: {len(self.business_words_set)} records", "VALIDATOR")
-                except Exception as e:
-                    logger.warning(f"Failed to load business words: {e}", "VALIDATOR")
-            
-            # Load company suffixes
-            suffixes_file = os.path.join(self.dictionary_path, "usa_company_sufx_abrv_infa.csv")
-            if os.path.exists(suffixes_file):
-                try:
-                    df = pd.read_csv(suffixes_file, encoding='utf-8')
-                    if len(df.columns) > 0:
-                        suffix_col = df.columns[0]
-                        self.company_suffixes_set = set(df[suffix_col].str.lower().dropna())
-                        loaded_count += 1
-                        logger.info(f"Loaded company suffixes: {len(self.company_suffixes_set)} records", "VALIDATOR")
-                except Exception as e:
-                    logger.warning(f"Failed to load company suffixes: {e}", "VALIDATOR")
-            
-            # Load name prefixes
-            prefixes_file = os.path.join(self.dictionary_path, "usa_name_prefix_NYL.csv")
-            if os.path.exists(prefixes_file):
-                try:
-                    df = pd.read_csv(prefixes_file, encoding='utf-8')
-                    if len(df.columns) > 0:
-                        prefix_col = df.columns[0]
-                        self.name_prefixes_set = set(df[prefix_col].str.lower().dropna())
-                        loaded_count += 1
-                        logger.info(f"Loaded name prefixes: {len(self.name_prefixes_set)} records", "VALIDATOR")
-                except Exception as e:
-                    logger.warning(f"Failed to load name prefixes: {e}", "VALIDATOR")
+            for dict_type, possible_filenames in dictionary_files.items():
+                loaded = False
+                for filename in possible_filenames:
+                    filepath = os.path.join(self.dictionary_path, filename)
+                    if os.path.exists(filepath):
+                        for encoding in encodings_to_try:
+                            try:
+                                df = pd.read_csv(filepath, encoding=encoding)
+                                if len(df.columns) > 0 and len(df) > 0:
+                                    self._process_dictionary_file(dict_type, df)
+                                    loaded_count += 1
+                                    loaded = True
+                                    logger.info(f"Loaded {dict_type}: {len(df)} records from {filename} (encoding: {encoding})", "VALIDATOR")
+                                    break
+                            except Exception as e:
+                                logger.warning(f"Failed to load {filename} with {encoding}: {e}", "VALIDATOR")
+                        if loaded:
+                            break
+                
+                if not loaded:
+                    logger.warning(f"Could not load {dict_type} dictionary", "VALIDATOR")
             
             self.dictionary_loaded = loaded_count > 0
             logger.info(f"Dictionary loading complete: {loaded_count} files loaded", "VALIDATOR")
@@ -190,6 +168,44 @@ class NameValidator:
             'group', 'partners', 'associates', 'firm', 'office', 'bank', 'trust',
             'foundation', 'institute', 'university', 'college', 'school', 'academy','jtly','jointly'
         }
+
+        def _process_dictionary_file(self, dict_type: str, df: pd.DataFrame):
+            """Process different types of dictionary files"""
+            try:
+                if dict_type == 'first_names':
+                    name_col = df.columns[0]
+                    self.first_names_set = set(df[name_col].str.lower().dropna())
+                
+                elif dict_type == 'surnames':
+                    name_col = df.columns[0]
+                    self.surnames_set = set(df[name_col].str.lower().dropna())
+                
+                elif dict_type == 'gender' and len(df.columns) >= 2:
+                    name_col, gender_col = df.columns[0], df.columns[1]
+                    for _, row in df.iterrows():
+                        if pd.notna(row[name_col]) and pd.notna(row[gender_col]):
+                            self.name_to_gender[row[name_col].lower()] = row[gender_col].upper()
+                
+                elif dict_type == 'nicknames' and len(df.columns) >= 2:
+                    nickname_col, standard_col = df.columns[0], df.columns[1]
+                    for _, row in df.iterrows():
+                        if pd.notna(row[nickname_col]) and pd.notna(row[standard_col]):
+                            self.nickname_to_standard[row[nickname_col].lower()] = row[standard_col].title()
+                
+                elif dict_type == 'business':
+                    word_col = df.columns[0]
+                    self.business_words_set = set(df[word_col].str.lower().dropna())
+                
+                elif dict_type == 'suffixes':
+                    suffix_col = df.columns[0]
+                    self.company_suffixes_set = set(df[suffix_col].str.lower().dropna())
+                
+                elif dict_type == 'prefixes':
+                    prefix_col = df.columns[0]
+                    self.name_prefixes_set = set(df[prefix_col].str.lower().dropna())
+                    
+            except Exception as e:
+                logger.error(f"Error processing {dict_type} dictionary: {e}", "VALIDATOR")
     
     def validate(self, first_name: str, last_name: str) -> Dict:
         """Enhanced validation with dictionary lookup and AI fallback"""

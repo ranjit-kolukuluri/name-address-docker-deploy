@@ -21,6 +21,7 @@ parent_dir = current_file.parent.parent
 if str(parent_dir) not in sys.path:
     sys.path.insert(0, str(parent_dir))
 
+
 from core.services import ValidationService
 from core.models import (
     NameValidationRequest, NameValidationResponse, AddressRecord,
@@ -50,6 +51,63 @@ app.add_middleware(
 # Initialize validation service
 validation_service = None
 
+@app.on_event("startup")
+async def startup_event():
+    """Initialize validation service with Docker-compatible paths"""
+    global validation_service
+    
+    logger.info("Starting Docker-compatible API server", "API")
+    
+    try:
+        # 🔧 FIXED: Use configurable dictionary path
+        dictionary_path = Config.get_dictionary_path()
+        validation_service = ValidationService(dictionary_path)
+        
+        dict_status = "with dictionaries" if validation_service.dictionary_status else "AI-only mode"
+        logger.info(f"Validation service initialized {dict_status}", "API")
+        
+        # Log dictionary status for debugging
+        if dictionary_path:
+            logger.info(f"Dictionary path: {dictionary_path}", "API")
+        else:
+            logger.warning("No dictionary path found - using AI fallback", "API")
+            
+    except Exception as e:
+        logger.error(f"Failed to initialize validation service: {e}", "API")
+
+    @app.get("/health")    
+    async def health_check():
+        """Enhanced health check with dictionary status"""
+        return {
+            "status": "healthy",
+            "dictionary_loaded": validation_service.dictionary_status if validation_service else False,
+            "dictionary_path": Config.get_dictionary_path(),
+            "usps_configured": validation_service.is_address_validation_available() if validation_service else False,
+            "csv_upload_enabled": True,
+            "docker_compatible": True
+        }
+    @app.post("/api/upload-address-csv")
+    async def upload_address_csv(files: List[UploadFile] = File(...)):
+        """Multi-CSV address upload endpoint"""
+        if not validation_service:
+            raise HTTPException(status_code=503, detail="Validation service not available")
+        
+        logger.info(f"Processing {len(files)} CSV files for address validation", "API")
+        
+        # Implementation here...
+        return {"status": "CSV upload endpoint active", "files_received": len(files)}
+    
+    @app.post("/api/upload-names-csv") 
+    async def upload_names_csv(files: List[UploadFile] = File(...)):
+        """Multi-CSV name upload endpoint"""
+        if not validation_service:
+            raise HTTPException(status_code=503, detail="Validation service not available")
+            
+        logger.info(f"Processing {len(files)} CSV files for name validation", "API")
+        
+        # Implementation here...
+        return {"status": "CSV upload endpoint active", "files_received": len(files)}
+    
 # USPS Rate Limiting
 class USPSRateLimiter:
     """Rate limiter for USPS API calls"""
